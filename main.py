@@ -1,4 +1,4 @@
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, Depends, HTTPException, status
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, Depends, HTTPException, status, Cookie
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
@@ -10,13 +10,13 @@ import logging
 
 from auth import (
     get_current_user,
-    authenticate_user,
+    authenticate_user,  # Use this directly
     create_access_token,
     ACCESS_TOKEN_EXPIRE_MINUTES,
-    fake_users_db,
     oauth2_scheme,
     get_token_from_cookie,
 )
+from database import get_db_connection  # Import the database connection
 
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
@@ -87,7 +87,8 @@ manager = ConnectionManager()
 # ---------------------------
 @app.post("/token", response_model=dict)
 async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends()):
-    user = authenticate_user(fake_users_db, form_data.username, form_data.password)
+    # Use authenticate_user directly (no fake_users_db)
+    user = authenticate_user(form_data.username, form_data.password)
     if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -125,7 +126,7 @@ async def websocket_endpoint(websocket: WebSocket, client_id: int):
         await websocket.close(code=1008)
         return
     try:
-        await get_current_user(token)
+        user = await get_current_user(token)  # Get the authenticated user
     except HTTPException:
         await websocket.close(code=1008)
         return
@@ -140,11 +141,20 @@ async def websocket_endpoint(websocket: WebSocket, client_id: int):
             data = await websocket.receive_text()
             data = json.loads(data)
             if data["type"] == "public_message":
+                # Store public message in the database
+                conn = get_db_connection()
+                cursor = conn.cursor()
+                cursor.execute(
+                    "INSERT INTO public_messages (sender_id, message) VALUES (?, ?)",
+                    (user["id"], data["message"])
+                )
+                conn.commit()
+                conn.close()
+
                 await manager.send_personal_message(
                     json.dumps({"message": f"You wrote: {data['message']}", "sender": "you"}),
                     websocket,
                 )
-                # Broadcast the public message with the actual sender's name
                 await manager.broadcast(f"{name} says: {data['message']}", sender=name)
             elif data["type"] == "get_user_list":
                 await manager.send_user_list(websocket)
@@ -170,6 +180,16 @@ async def websocket_endpoint(websocket: WebSocket, client_id: int):
                         }))
                         break
             elif data["type"] == "private_message":
+                # Store private message in the database
+                conn = get_db_connection()
+                cursor = conn.cursor()
+                cursor.execute(
+                    "INSERT INTO private_messages (sender_id, recipient_id, message) VALUES (?, ?, ?)",
+                    (user["id"], data["recipient_id"], data["message"])
+                )
+                conn.commit()
+                conn.close()
+
                 await manager.send_private_message(client_id, data["recipient_id"], data["message"])
     except WebSocketDisconnect:
         manager.disconnect(websocket)
