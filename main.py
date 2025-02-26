@@ -7,16 +7,18 @@ from fastapi.security import OAuth2PasswordRequestForm
 from datetime import timedelta
 import json
 import logging
+from pydantic import BaseModel
 
 from auth import (
     get_current_user,
-    authenticate_user,  # Use this directly
+    authenticate_user,
     create_access_token,
     ACCESS_TOKEN_EXPIRE_MINUTES,
     oauth2_scheme,
     get_token_from_cookie,
+    get_password_hash,
 )
-from database import get_db_connection  # Import the database connection
+from database import get_db_connection
 
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
@@ -62,7 +64,6 @@ class ConnectionManager:
         await websocket.send_text(json.dumps({"type": "user_list", "users": users}))
 
     async def send_private_message(self, sender_id: int, recipient_id: int, message: str):
-        # Find the sender's name
         sender_name = None
         for conn in self.active_connections:
             if conn["client_id"] == sender_id:
@@ -70,7 +71,6 @@ class ConnectionManager:
                 break
         if sender_name is None:
             sender_name = "unknown"
-        # Find the recipient and send the private message
         for conn in self.active_connections:
             if conn["client_id"] == recipient_id:
                 await conn["websocket"].send_text(json.dumps({
@@ -87,7 +87,6 @@ manager = ConnectionManager()
 # ---------------------------
 @app.post("/token", response_model=dict)
 async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends()):
-    # Use authenticate_user directly (no fake_users_db)
     user = authenticate_user(form_data.username, form_data.password)
     if not user:
         raise HTTPException(
@@ -101,7 +100,6 @@ async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(
     )
     logger.debug(f"Access token created: {access_token}")
     response = JSONResponse(content={"access_token": access_token, "token_type": "bearer"})
-    # Set the JWT as an HTTP-only cookie
     response.set_cookie(key="access_token", value=access_token, httponly=True)
     return response
 
@@ -116,6 +114,72 @@ async def get_chat(request: Request, token: str = Depends(get_token_from_cookie)
     logger.debug(f"Current user: {current_user}")
     return templates.TemplateResponse("chat.html", {"request": request, "user": current_user})
 
+@app.get("/register", response_class=HTMLResponse)
+async def get_register(request: Request):
+    return templates.TemplateResponse("register.html", {"request": request})
+
+class UserCreate(BaseModel):
+    username: str
+    password: str
+    full_name: str
+    email: str
+
+@app.post("/register", response_model=dict)
+async def register_user(user: UserCreate):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    hashed_password = get_password_hash(user.password)
+    try:
+        cursor.execute("""
+            INSERT INTO users (username, hashed_password, full_name, email)
+            VALUES (?, ?, ?, ?)
+        """, (user.username, hashed_password, user.full_name, user.email))
+        conn.commit()
+    except sqlite3.IntegrityError:
+        raise HTTPException(status_code=400, detail="Username already registered")
+    finally:
+        conn.close()
+    return {"message": "User registered successfully"}
+
+@app.get("/profile", response_class=HTMLResponse)
+async def get_profile(request: Request, token: str = Depends(get_token_from_cookie)):
+    current_user = await get_current_user(token)
+    return templates.TemplateResponse("profile.html", {"request": request, "user": current_user})
+
+class UserUpdate(BaseModel):
+    full_name: str
+    email: str
+
+@app.post("/profile", response_model=dict)
+async def update_profile(user_update: UserUpdate, token: str = Depends(get_token_from_cookie)):
+    current_user = await get_current_user(token)
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        UPDATE users
+        SET full_name = ?, email = ?
+        WHERE id = ?
+    """, (user_update.full_name, user_update.email, current_user["id"]))
+    conn.commit()
+    conn.close()
+    return {"message": "Profile updated successfully"}
+
+@app.get("/messages", response_model=list)
+async def get_messages(token: str = Depends(get_token_from_cookie)):
+    current_user = await get_current_user(token)
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT id, sender_id, message, timestamp, NULL AS recipient_id FROM public_messages
+        UNION
+        SELECT id, sender_id, message, timestamp, recipient_id FROM private_messages WHERE sender_id = ? OR recipient_id = ?
+        ORDER BY timestamp DESC
+    """, (current_user["id"], current_user["id"]))
+    messages = cursor.fetchall()
+    conn.close()
+    return messages
+
+
 # ---------------------------
 # WebSocket Endpoint
 # ---------------------------
@@ -126,7 +190,7 @@ async def websocket_endpoint(websocket: WebSocket, client_id: int):
         await websocket.close(code=1008)
         return
     try:
-        user = await get_current_user(token)  # Get the authenticated user
+        user = await get_current_user(token)
     except HTTPException:
         await websocket.close(code=1008)
         return
@@ -141,7 +205,6 @@ async def websocket_endpoint(websocket: WebSocket, client_id: int):
             data = await websocket.receive_text()
             data = json.loads(data)
             if data["type"] == "public_message":
-                # Store public message in the database
                 conn = get_db_connection()
                 cursor = conn.cursor()
                 cursor.execute(
@@ -159,17 +222,14 @@ async def websocket_endpoint(websocket: WebSocket, client_id: int):
             elif data["type"] == "get_user_list":
                 await manager.send_user_list(websocket)
             elif data["type"] == "typing":
-                # Broadcast to all other clients that this user is typing
                 for conn in manager.active_connections:
                     if conn["websocket"] != websocket:
                         await conn["websocket"].send_text(json.dumps({"type": "typing", "sender": name}))
             elif data["type"] == "stop_typing":
-                # Notify others that this user stopped typing
                 for conn in manager.active_connections:
                     if conn["websocket"] != websocket:
                         await conn["websocket"].send_text(json.dumps({"type": "stop_typing", "sender": name}))
             elif data["type"] == "read_receipt":
-                # Forward the read receipt to the original sender of the message
                 original_sender = data.get("original_sender")
                 for conn in manager.active_connections:
                     if conn["name"] == original_sender:
@@ -180,7 +240,6 @@ async def websocket_endpoint(websocket: WebSocket, client_id: int):
                         }))
                         break
             elif data["type"] == "private_message":
-                # Store private message in the database
                 conn = get_db_connection()
                 cursor = conn.cursor()
                 cursor.execute(

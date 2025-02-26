@@ -5,28 +5,23 @@
     <link rel="stylesheet" href="/static/style.css" />
   </head>
   <body>
-    <!-- Chat container -->
     <div id="chat-container">
-      <!-- Top bar with user details and buttons -->
       <div id="top-bar">
         <div id="user-details">
           <span id="user-name">Welcome, {{ user.username }}</span>
         </div>
         <button onclick="showUserList()">Show Connected Users</button>
+        <button onclick="loadMessageHistory()">Load Message History</button>
       </div>
 
-      <!-- Typing indicator -->
       <div id="typing-indicator" style="margin-top: 10px; color: gray"></div>
 
-      <!-- User list (hidden by default) -->
       <div id="user-list" style="display: none">
         <ul id="user-list-ul"></ul>
       </div>
 
-      <!-- Chat messages -->
       <ul id="messages"></ul>
 
-      <!-- Message input form -->
       <form id="form" onsubmit="sendMessage(event)">
         <input
           type="text"
@@ -37,7 +32,6 @@
         <button>Send</button>
       </form>
 
-      <!-- Private message modal (hidden by default) -->
       <div id="private-message-modal" style="display: none">
         <div class="modal-header">
           <h3>Send Private Message</h3>
@@ -55,14 +49,10 @@
     </div>
 
     <script>
-      // Generate a unique client ID (e.g., using the current timestamp)
       var client_id = Date.now();
-      // The username is provided by the server-side template
       var userName = "{{ user.username }}";
-      // Global variable to store the recipient's ID when sending a private message
       var selectedRecipientId = null;
 
-      // Establish WebSocket connection (cookies are sent automatically)
       var ws = new WebSocket(
         `ws://${window.location.host}/ws/${client_id}?name=${encodeURIComponent(
           userName
@@ -70,8 +60,6 @@
       );
       console.log("WebSocket URL:", ws.url);
 
-      // Typing indicator functionality:
-      // Send a "typing" event on input and a "stop_typing" event after 1 second of inactivity.
       let typingTimeout;
       document.getElementById("messageText").addEventListener("input", () => {
         ws.send(JSON.stringify({ type: "typing" }));
@@ -98,21 +86,17 @@
         } else if (data.type === "user_list") {
           const userList = data.users;
           const userListUl = document.getElementById("user-list-ul");
-          userListUl.innerHTML = ""; // Clear any existing list items
+          userListUl.innerHTML = "";
 
           userList.forEach((user) => {
-            // Optionally, skip showing yourself in the list
             if (user.name === userName) return;
 
             let li = document.createElement("li");
             li.textContent = user.name;
-            // When clicking a user, open the private message modal and set the recipient ID
             li.addEventListener("click", () => {
               selectedRecipientId = user.id;
-              // Update the modal header (optional)
               document.querySelector("#private-message-modal h3").textContent =
                 "Send Private Message to " + user.name;
-              // Show the private message modal and hide the user list modal
               document.getElementById("private-message-modal").style.display =
                 "block";
               document.getElementById("user-list").style.display = "none";
@@ -120,7 +104,6 @@
             userListUl.appendChild(li);
           });
 
-          // Show the user list modal
           document.getElementById("user-list").style.display = "block";
         } else if (data.type === "private_message") {
           let messagesList = document.getElementById("messages");
@@ -129,13 +112,11 @@
           newItem.classList.add("private");
           messagesList.appendChild(newItem);
         } else {
-          // Assume this is a public message
           let messagesList = document.getElementById("messages");
           let newItem = document.createElement("li");
           newItem.textContent = `${data.sender}: ${data.message}`;
           messagesList.appendChild(newItem);
 
-          // Add a click listener to send a read receipt if the message is not from you/system
           if (
             data.sender !== userName &&
             data.sender !== "system" &&
@@ -154,7 +135,6 @@
         }
       };
 
-      // Send a public message
       function sendMessage(event) {
         event.preventDefault();
         let messageInput = document.getElementById("messageText");
@@ -162,26 +142,20 @@
         if (message.trim() !== "") {
           ws.send(JSON.stringify({ type: "public_message", message: message }));
           messageInput.value = "";
-          // Stop typing indicator once the message is sent
           ws.send(JSON.stringify({ type: "stop_typing" }));
         }
       }
 
-      // Request the user list from the server
       function showUserList() {
         ws.send(JSON.stringify({ type: "get_user_list" }));
       }
 
-      // Close the private message modal
       function closePrivateMessageModal() {
         document.getElementById("private-message-modal").style.display = "none";
-        // Optionally, clear the selected recipient
         selectedRecipientId = null;
-        // Clear the private message text area
         document.getElementById("private-message-text").value = "";
       }
 
-      // Send a private message to the selected user
       function sendPrivateMessage() {
         let message = document.getElementById("private-message-text").value;
         if (selectedRecipientId && message.trim() !== "") {
@@ -192,15 +166,29 @@
               message: message,
             })
           );
-          // Optionally, append the sent message to your chat window as confirmation
           let messagesList = document.getElementById("messages");
           let newItem = document.createElement("li");
           newItem.textContent = `Private to ${selectedRecipientId}: ${message}`;
           newItem.classList.add("private");
           messagesList.appendChild(newItem);
-          // Clear the textarea and close the modal
           document.getElementById("private-message-text").value = "";
           closePrivateMessageModal();
+        }
+      }
+
+      async function loadMessageHistory() {
+        const response = await fetch("/messages");
+        if (response.ok) {
+          const messages = await response.json();
+          const messagesList = document.getElementById("messages");
+          messagesList.innerHTML = "";
+          messages.forEach((message) => {
+            let newItem = document.createElement("li");
+            newItem.textContent = `${message.sender_id}: ${message.message}`;
+            messagesList.appendChild(newItem);
+          });
+        } else {
+          alert("Failed to load message history");
         }
       }
     </script>

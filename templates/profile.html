@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>Profile</title>
+    <link rel="stylesheet" href="/static/style.css" />
+  </head>
+  <body>
+    <div id="profile-container">
+      <h1>Profile</h1>
+      <form id="profile-form" onsubmit="updateProfile(event)">
+        <input
+          type="text"
+          id="full_name"
+          placeholder="Full Name"
+          value="{{ user.full_name }}"
+          required
+        />
+        <input
+          type="email"
+          id="email"
+          placeholder="Email"
+          value="{{ user.email }}"
+          required
+        />
+        <button type="submit">Update Profile</button>
+      </form>
+    </div>
+
+    <script>
+      async function updateProfile(event) {
+        event.preventDefault();
+        const full_name = document.getElementById("full_name").value.trim();
+        const email = document.getElementById("email").value.trim();
+
+        const response = await fetch("/profile", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            full_name: full_name,
+            email: email,
+          }),
+        });
+
+        if (response.ok) {
+          alert("Profile updated successfully");
+        } else {
+          const data = await response.json();
+          alert(data.detail);
+        }
+      }
+    </script>
+  </body>
+</html>
