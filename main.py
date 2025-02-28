@@ -177,7 +177,11 @@ async def get_messages(token: str = Depends(get_token_from_cookie)):
     """, (current_user["id"], current_user["id"]))
     messages = cursor.fetchall()
     conn.close()
-    return messages
+    
+    # Convertir les objets sqlite3.Row en dictionnaires
+    messages_dict = [dict(message) for message in messages]
+    
+    return messages_dict
 
 
 # ---------------------------
