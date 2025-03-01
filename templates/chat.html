@@ -76,6 +76,15 @@
         }, 1000);
       });
 
+      // Request notification permission
+      if (Notification.permission !== "granted") {
+        Notification.requestPermission().then((permission) => {
+          if (permission === "granted") {
+            console.log("Notification permission granted.");
+          }
+        });
+      }
+
       ws.onmessage = function (event) {
         const data = JSON.parse(event.data);
 
@@ -118,17 +127,22 @@
           newItem.textContent = `Private from ${data.sender}: ${data.message}`;
           newItem.classList.add("private");
           messagesList.appendChild(newItem);
+
+          // Show notification for private messages
+          if (Notification.permission === "granted") {
+            new Notification("New Private Message", {
+              body: `${data.sender}: ${data.message}`,
+            });
+          }
         } else {
           let messagesList = document.getElementById("messages");
           let newItem = document.createElement("li");
-          newItem.textContent = `${data.sender}: ${data.message}`;
+          // Use "you" for self, else use sender's name
+          const displaySender = data.sender === userName ? "you" : data.sender;
+          newItem.textContent = `${displaySender}: ${data.message}`;
           messagesList.appendChild(newItem);
 
-          if (
-            data.sender !== userName &&
-            data.sender !== "system" &&
-            data.sender !== "you"
-          ) {
+          if (data.sender !== userName && data.sender !== "system") {
             newItem.addEventListener("click", () => {
               ws.send(
                 JSON.stringify({
@@ -138,6 +152,13 @@
                 })
               );
             });
+
+            // Show notification for new messages
+            if (Notification.permission === "granted") {
+              new Notification("New Message", {
+                body: `${data.sender}: ${data.message}`,
+              });
+            }
           }
         }
       };
@@ -150,6 +171,12 @@
           ws.send(JSON.stringify({ type: "public_message", message: message }));
           messageInput.value = "";
           ws.send(JSON.stringify({ type: "stop_typing" }));
+
+          // Display the user's own message locally
+          let messagesList = document.getElementById("messages");
+          let newItem = document.createElement("li");
+          newItem.textContent = `you: ${message}`;
+          messagesList.appendChild(newItem);
         }
       }
 
@@ -192,21 +219,21 @@
           messages.forEach((message) => {
             let newItem = document.createElement("li");
             newItem.textContent = `${message.sender_id}: ${message.message}`;
-            messagesList.appendChild(newItem); // Append messages in the correct order
+            messagesList.appendChild(newItem);
           });
         } else {
           alert("Failed to load message history");
         }
       }
 
-      // Fonction pour gérer la déconnexion
+      // Logout function
       async function logout() {
         const response = await fetch("/logout", {
           method: "POST",
-          credentials: "include", // Inclure les cookies dans la requête
+          credentials: "include",
         });
         if (response.ok) {
-          window.location.href = "/"; // Rediriger vers la page de connexion
+          window.location.href = "/";
         } else {
           alert("Logout failed");
         }

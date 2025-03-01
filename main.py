@@ -54,10 +54,14 @@ class ConnectionManager:
 
     async def send_personal_message(self, message: str, websocket: WebSocket):
         await websocket.send_text(message)
-
-    async def broadcast(self, message: str, sender: str = "system"):
+      
+    async def broadcast(self, message: str, sender: str = "system", exclude_websocket: WebSocket = None):
         for conn in self.active_connections:
-            await conn["websocket"].send_text(json.dumps({"message": message, "sender": sender}))
+            if conn["websocket"] != exclude_websocket:  # Exclude the sender
+                await conn["websocket"].send_text(json.dumps({
+                    "message": message,  # Send the message text without prepending the sender
+                    "sender": sender     # Pass the sender separately
+            }))
 
     async def send_user_list(self, websocket: WebSocket):
         users = [{"id": conn["client_id"], "name": conn["name"]} for conn in self.active_connections]
@@ -177,10 +181,10 @@ async def get_messages(token: str = Depends(get_token_from_cookie)):
     """, (current_user["id"], current_user["id"]))
     messages = cursor.fetchall()
     conn.close()
-    
-    # Convertir les objets sqlite3.Row en dictionnaires
+
+    # Convert sqlite3.Row objects to dictionaries
     messages_dict = [dict(message) for message in messages]
-    
+
     return messages_dict
 
 # ---------------------------
@@ -188,7 +192,7 @@ async def get_messages(token: str = Depends(get_token_from_cookie)):
 # ---------------------------
 @app.post("/logout")
 async def logout(response: Response):
-    # Supprimer le cookie d'authentification
+    # Delete the authentication cookie
     response.delete_cookie(key="access_token")
     return {"message": "Logged out successfully"}
 
@@ -211,7 +215,8 @@ async def websocket_endpoint(websocket: WebSocket, client_id: int):
     name = query_params.get("name", f"Client #{client_id}")
 
     await manager.connect(websocket, client_id, name)
-    await manager.broadcast(f"{name} joined the chat")
+    # Send system message without duplicating the sender
+    await manager.broadcast(f"{name} joined the chat", sender="system", exclude_websocket=websocket)
     try:
         while True:
             data = await websocket.receive_text()
@@ -226,11 +231,8 @@ async def websocket_endpoint(websocket: WebSocket, client_id: int):
                 conn.commit()
                 conn.close()
 
-                await manager.send_personal_message(
-                    json.dumps({"message": f"You wrote: {data['message']}", "sender": "you"}),
-                    websocket,
-                )
-                await manager.broadcast(f"{name} says: {data['message']}", sender=name)
+                # Broadcast the message without prepending the sender's name
+                await manager.broadcast(data['message'], sender=name, exclude_websocket=websocket)
             elif data["type"] == "get_user_list":
                 await manager.send_user_list(websocket)
             elif data["type"] == "typing":
@@ -264,4 +266,5 @@ async def websocket_endpoint(websocket: WebSocket, client_id: int):
                 await manager.send_private_message(client_id, data["recipient_id"], data["message"])
     except WebSocketDisconnect:
         manager.disconnect(websocket)
-        await manager.broadcast(f"{name} left the chat")
+        # Send system message without duplicating the sender
+        await manager.broadcast(f"{name} left the chat", sender="system", exclude_websocket=websocket)
