@@ -1,4 +1,4 @@
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, Depends, HTTPException, status, Cookie
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, Depends, HTTPException, status, Cookie, Response
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
@@ -173,7 +173,7 @@ async def get_messages(token: str = Depends(get_token_from_cookie)):
         SELECT id, sender_id, message, timestamp, NULL AS recipient_id FROM public_messages
         UNION
         SELECT id, sender_id, message, timestamp, recipient_id FROM private_messages WHERE sender_id = ? OR recipient_id = ?
-        ORDER BY timestamp DESC
+        ORDER BY timestamp ASC  -- Fetch messages in ascending order
     """, (current_user["id"], current_user["id"]))
     messages = cursor.fetchall()
     conn.close()
@@ -183,6 +183,14 @@ async def get_messages(token: str = Depends(get_token_from_cookie)):
     
     return messages_dict
 
+# ---------------------------
+# Logout Endpoint
+# ---------------------------
+@app.post("/logout")
+async def logout(response: Response):
+    # Supprimer le cookie d'authentification
+    response.delete_cookie(key="access_token")
+    return {"message": "Logged out successfully"}
 
 # ---------------------------
 # WebSocket Endpoint

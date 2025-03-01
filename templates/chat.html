@@ -9,6 +9,7 @@
       <ul>
         <li><a href="/chat">Chat</a></li>
         <li><a href="/profile">Profile</a></li>
+        <li><a href="#" onclick="logout()">Logout</a></li>
       </ul>
     </nav>
     <div id="chat-container">
@@ -187,14 +188,27 @@
         if (response.ok) {
           const messages = await response.json();
           const messagesList = document.getElementById("messages");
-          messagesList.innerHTML = "";
+          messagesList.innerHTML = ""; // Clear existing messages
           messages.forEach((message) => {
             let newItem = document.createElement("li");
             newItem.textContent = `${message.sender_id}: ${message.message}`;
-            messagesList.appendChild(newItem);
+            messagesList.appendChild(newItem); // Append messages in the correct order
           });
         } else {
           alert("Failed to load message history");
+        }
+      }
+
+      // Fonction pour gérer la déconnexion
+      async function logout() {
+        const response = await fetch("/logout", {
+          method: "POST",
+          credentials: "include", // Inclure les cookies dans la requête
+        });
+        if (response.ok) {
+          window.location.href = "/"; // Rediriger vers la page de connexion
+        } else {
+          alert("Logout failed");
         }
       }
     </script>
